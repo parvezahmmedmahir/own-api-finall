@@ -33,7 +33,6 @@ venv.bak/
 
 # Configuration and Sessions (CRITICAL)
 session.json
-settings/config.ini
 .env
 config.ini
 

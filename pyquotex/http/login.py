@@ -12,14 +12,22 @@ class Login(Browser):
     url = ""
     cookies = None
     ssid = None
-    base_url = 'market-qx.trade'
+    # Switched to qxbroker.com as it is less blocked on cloud servers
+    base_url = 'qxbroker.com'
     https_base_url = f'https://{base_url}'
 
     def __init__(self, api, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.api = api
         self.html = None
-        self.headers = self.get_headers()
+        # Modern Windows Chrome User-Agent
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Sec-Ch-Ua": '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Ch-Ua-Mobile": "?0"
+        }
         self.full_url = f"{self.https_base_url}/{api.lang}"
 
     def get_token(self):

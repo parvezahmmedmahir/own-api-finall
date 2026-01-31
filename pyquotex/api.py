@@ -77,9 +77,9 @@ class QuotexAPI(object):
 
     def __init__(
             self,
-            host,
-            username,
-            password,
+            host="qxbroker.com",
+            username=None,
+            password=None,
             lang,
             proxies=None,
             resource_path=None,

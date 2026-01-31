@@ -1,0 +1,57 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Configuration and Sessions (CRITICAL)
+session.json
+settings/config.ini
+.env
+config.ini
+
+# Logs
+*.log
+pyquotex.log
+
+# Debugging and temporary files
+debug_assets.py
+test_candles.py
+test_history.py
+test_v2.py
+show_live_data.py
+examine_page.py
+trade_page.html
+playwright_info.png
+test_numpy.py
+
+# OS
+.DS_Store
+Thumbs.db

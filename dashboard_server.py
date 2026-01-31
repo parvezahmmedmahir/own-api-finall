@@ -9,9 +9,8 @@ from pyquotex.stable_api import Quotex
 from pyquotex.config import credentials
 from datetime import datetime, timedelta
 
-app = FastAPI(title="PyQuotex Ultra-Live Data Collector")
+app = FastAPI(title="PyQuotex Live 600-Candle Engine")
 
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,12 +19,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global State
+# Global Storage
 client = None
 last_error = "Not initialized"
-DATA_DIR = "market_data"
-os.makedirs(f"{DATA_DIR}/24h", exist_ok=True)
-os.makedirs(f"{DATA_DIR}/7d", exist_ok=True)
+# live_buffers[asset] = [ {time, open, high, low, close, ticks}, ... ] (exactly 600)
+live_buffers = {}
 
 async def get_client():
     global client, last_error
@@ -36,197 +34,132 @@ async def get_client():
                 last_error = "Missing QUOTEX_EMAIL or QUOTEX_PASSWORD"
                 return None
             
-            # Initialize client
             client = Quotex(email=email, password=password)
-            
-            # The .connect() method might throw a RuntimeError if the initial page load fails
             try:
                 check, reason = await client.connect()
                 if not check:
                     last_error = f"Login Failed: {reason}"
-                    # Keep client for PIN verification if needed
-                    if "pin" in str(reason).lower() or "verify" in str(reason).lower():
-                        return client
-                    client = None
-                    return None
+                    return client if "pin" in str(reason).lower() else None
                 last_error = "Connected"
             except RuntimeError as re:
-                last_error = f"Connection Error: {str(re)}"
-                # Usually happens when Cloudflare blocks the initial request
+                # Handle the 'No response stored' error gracefully
+                if "No response stored" in str(re):
+                    last_error = "Blocked by Quotex (Security). Check Render logs."
+                else:
+                    last_error = f"Runtime Error: {str(re)}"
                 client = None
-                return None
         except Exception as e:
-            last_error = f"Fatal Error: {str(e)}"
+            last_error = f"Init Error: {str(e)}"
             client = None
     return client
 
-def save_candle(folder, asset, candle):
-    """High-speed storage of OHLC data."""
-    file_path = f"{DATA_DIR}/{folder}/{asset}.json"
-    data = []
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r') as f:
-                data = json.load(f)
-        except: data = []
-    
-    # Avoid duplicates (check timestamp)
-    if data and data[-1]['time'] == candle['time']:
-        # Update the existing candle (it might have updated High/Low/Close since last tick)
-        data[-1] = candle
-    else:
-        data.append(candle)
-    
-    # Enforce Limits: 20MB for 24h, 50MB for 7d
-    max_size = 20 * 1024 * 1024 if folder == "24h" else 50 * 1024 * 1024
-    if os.path.exists(file_path) and os.path.getsize(file_path) > max_size:
-        data = data[-(len(data)//2):] # Keep only the most recent half
+async def update_live_buffer(q_client, asset):
+    """Maintains a rolling window of exactly 600 live candles."""
+    global live_buffers
+    try:
+        # Fetch the latest state (includes the running candle)
+        # We fetch 601 to ensure we have a full 600 history + 1 running
+        candles = await q_client.get_candles_v3(asset, 601, 60)
+        if candles:
+            # We take the most recent 600. The last one is the 'Open' one.
+            live_buffers[asset] = candles[-600:]
+            return True
+    except:
+        return False
 
-    with open(file_path, 'w') as f:
-        json.dump(data, f)
-
-async def process_asset_batch(q_client, assets):
-    """Fetches candle data in parallel batches."""
-    tasks = []
-    for asset in assets:
-        # Fetch last 2 candles (closed one + live one)
-        tasks.append(q_client.get_candles_v3(asset, 2, 60))
-    
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    for i, candles in enumerate(results):
-        if candles and not isinstance(candles, Exception):
-            asset_name = assets[i]
-            for candle in candles:
-                save_candle("24h", asset_name, candle)
-                save_candle("7d", asset_name, candle)
-
-async def ultra_collector_loop():
-    """Main high-speed collection engine."""
-    global client
-    last_rotate_24h = datetime.now()
-    last_rotate_7d = datetime.now()
-
+async def ultra_live_collector():
+    """Engine that refreshes all assets every 2 seconds for live movement."""
+    global client, live_buffers
     while True:
         try:
-            # Sync to the next 5-second interval for near real-time updates
-            # This is much faster than waiting 60 seconds
-            await asyncio.sleep(5) 
-            
             q_client = await get_client()
             if q_client and last_error == "Connected":
-                now = datetime.now()
-                
-                # Cleanup/Rotation
-                if now - last_rotate_24h > timedelta(days=1):
-                    for f in os.listdir(f"{DATA_DIR}/24h"): os.remove(f"{DATA_DIR}/24h/{f}")
-                    last_rotate_24h = now
-                if now - last_rotate_7d > timedelta(days=7):
-                    for f in os.listdir(f"{DATA_DIR}/7d"): os.remove(f"{DATA_DIR}/7d/{f}")
-                    last_rotate_7d = now
-
-                # Get ALL open assets
                 instruments = await q_client.get_instruments()
                 all_open = [i[1] for i in instruments if len(i) > 14 and i[14]]
                 
-                # Process in batches of 10 for speed
-                for i in range(0, len(all_open), 10):
-                    batch = all_open[i:i+10]
-                    await process_asset_batch(q_client, batch)
-                    await asyncio.sleep(0.2) # Small safety gap
-
+                # Check 15 assets at a time to stay fast
+                for i in range(0, len(all_open), 15):
+                    batch = all_open[i:i+15]
+                    tasks = [update_live_buffer(q_client, asset) for asset in batch]
+                    await asyncio.gather(*tasks)
+                    await asyncio.sleep(0.1)
+                
+                # Pause short to sync movement
+                await asyncio.sleep(2) 
+            else:
+                await asyncio.sleep(10)
         except Exception as e:
-            print(f"ULTRA-COLLECTOR ERROR: {e}")
+            print(f"COLLECTOR ERROR: {e}")
             await asyncio.sleep(5)
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(ultra_collector_loop())
+    asyncio.create_task(ultra_live_collector())
 
 @app.get("/")
 async def root():
     return {
         "status": "online",
-        "mode": "Ultra-Collector (All Assets)",
         "connection": last_error,
+        "mode": "Live 600-Candle Window",
+        "total_active_assets": len(live_buffers),
         "endpoints": {
+            "live_candles": "/api/live/{asset}",
             "all_assets": "/api/assets",
-            "history_1m": "/api/history/24h/{asset}",
-            "history_7d": "/api/history/7d/{asset}",
-            "custom_tf": "/api/history/7d/{asset}?tf=5 (Supports tf 5, 15, 60)"
+            "verify": "/api/verify?pin=XXXXXX"
         }
     }
+
+@app.get("/api/live/{asset}")
+async def get_live_candles(asset: str):
+    """Returns the exactly 600-candle live list for the asset."""
+    if asset in live_buffers:
+        return live_buffers[asset]
+    return {"error": "Data still loading for this asset or asset not found", "active": asset}
 
 @app.get("/api/assets")
 async def get_assets():
     q_client = await get_client()
-    if not q_client: return {"error": "API Error"}
+    if not q_client: return {"error": "Disconnected", "reason": last_error}
     instruments = await q_client.get_instruments()
-    return [{"symbol": i[1], "name": i[2], "open": bool(i[14])} for i in instruments if len(i) > 14]
-
-@app.get("/api/history/{folder}/{asset}")
-async def get_history(folder: str, asset: str, tf: int = 1):
-    if folder not in ["24h", "7d"]: return {"error": "Invalid folder"}
-    
-    file_path = f"{DATA_DIR}/{folder}/{asset}.json"
-    if not os.path.exists(file_path): return {"error": "Collecting data, please wait..."}
-    
-    with open(file_path, 'r') as f:
-        m1_data = json.load(f)
-        
-    if tf == 1: return m1_data
-    
-    # Aggregate to other timeframes (5m, 15m, etc.)
-    aggregated = []
-    chunk_size = tf
-    for i in range(0, len(m1_data), chunk_size):
-        chunk = m1_data[i:i+chunk_size]
-        if not chunk: continue
-        aggregated.append({
-            "time": chunk[0]["time"],
-            "open": chunk[0]["open"],
-            "high": max(c.get("high", c["close"]) for c in chunk),
-            "low": min(c.get("low", c["close"]) for c in chunk),
-            "close": chunk[-1]["close"],
-            "ticks": sum(c.get("ticks", 1) for c in chunk)
-        })
-    return aggregated
+    asset_list = []
+    for i in instruments:
+        if len(i) > 14:
+            asset_list.append({
+                "symbol": i[1], 
+                "name": i[2], 
+                "open": bool(i[14]),
+                "collected": i[1] in live_buffers
+            })
+    return asset_list
 
 @app.get("/api/verify")
-async def verify(pin: str):
+async def verify_pin(pin: str):
     global client
-    if not client: return {"error": "Init client first"}
+    if not client: return {"error": "Client not ready"}
     ok, res = await client.send_pin(pin)
     return {"success": ok, "message": res}
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def ws_endpoint(websocket: WebSocket):
     await websocket.accept()
     q_client = await get_client()
     if not q_client: await websocket.close(); return
     
-    active_asset = None
-    
-    async def relay():
-        nonlocal active_asset
+    active = None
+    async def stream():
         while True:
-            if active_asset:
-                ticks = q_client.api.realtime_price.get(active_asset, [])
-                if ticks:
-                    q_client.api.realtime_price[active_asset] = []
-                    for t in ticks: await websocket.send_json({"type": "tick", "data": t})
-            await asyncio.sleep(0.1)
-
-    rt = asyncio.create_task(relay())
+            if active and active in live_buffers:
+                # Send the very last (live) candle from our 600 buffer
+                await websocket.send_json({"type": "live", "data": live_buffers[active][-1]})
+            await asyncio.sleep(1)
+            
+    st = asyncio.create_task(stream())
     try:
         while True:
             data = json.loads(await websocket.receive_text())
-            if data["type"] == "switch":
-                if active_asset: q_client.stop_candles_stream(active_asset)
-                active_asset = data["asset"]
-                q_client.start_candles_stream(active_asset, 60)
-    except:
-        rt.cancel()
+            if data["type"] == "switch": active = data["asset"]
+    except: st.cancel()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))

@@ -12,8 +12,8 @@ class Login(Browser):
     url = ""
     cookies = None
     ssid = None
-    # Array of domains to try if blocked
-    alternative_domains = ['qxbroker.com', 'quotex-broker.com', 'market-qx.com', 'quotex.io']
+    # Updated official domains
+    alternative_domains = ['qxbroker.com', 'quotex-broker.com', 'market-qx.trade', 'quotex.io', 'qx-broker.com']
     base_url = alternative_domains[0]
     https_base_url = f'https://{base_url}'
 

@@ -12,8 +12,8 @@ class Login(Browser):
     url = ""
     cookies = None
     ssid = None
-    # Updated official domains
-    alternative_domains = ['qxbroker.com', 'quotex-broker.com', 'market-qx.trade', 'quotex.io', 'qx-broker.com']
+    # Stable domains for 2026/01
+    alternative_domains = ['qxbroker.com', 'quotex.io', 'market-qx.trade', 'quotex-broker.com']
     base_url = alternative_domains[0]
     https_base_url = f'https://{base_url}'
 
@@ -23,16 +23,11 @@ class Login(Browser):
         self.html = None
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Cache-Control": "max-age=0"
+            "Referer": "https://www.google.com/"
         }
         self.full_url = f"{self.https_base_url}/{api.lang}"
 
@@ -40,23 +35,29 @@ class Login(Browser):
         """Attempts to fetch the CSRF token from multiple domains if blocked."""
         for domain in self.alternative_domains:
             try:
+                print(f"Bypass: Trying {domain}...")
                 self.base_url = domain
                 self.https_base_url = f'https://{domain}'
                 self.full_url = f"{self.https_base_url}/{self.api.lang}"
                 
-                # Direct sign-in page is often more stable than the modal
+                # Try the direct sign-in page
                 target_url = f"{self.full_url}/sign-in/"
-                self.send_request("GET", target_url, timeout=10)
+                resp = self.send_request("GET", target_url, timeout=15)
                 
-                if self.response and self.response.status_code == 200:
+                if resp and resp.status_code == 200:
                     html = self.get_soup()
                     match = html.find("input", {"name": "_token"})
                     if match:
                         token = match.get("value")
-                        print(f"Bypass Successful on: {domain}")
+                        print(f"SUCCESS: Bypass worked on {domain}")
                         return token
+                    else:
+                        print(f"WARN: Cloudflare challenge detected on {domain} (No token found)")
+                else:
+                    code = resp.status_code if resp else "No Response"
+                    print(f"FAIL: {domain} returned status {code}")
             except Exception as e:
-                print(f"Failed bypass on {domain}: {e}")
+                print(f"ERR: {domain} failed - {str(e)}")
                 continue
         return None
 

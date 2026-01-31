@@ -12,24 +12,33 @@ config = configparser.ConfigParser(interpolation=None)
 
 
 def credentials():
+    # Priority 1: Environment Variables (Best for Cloud like Render)
+    email = os.environ.get("QUOTEX_EMAIL")
+    password = os.environ.get("QUOTEX_PASSWORD")
 
-    if not config_path.exists():
-        config_path.parent.mkdir(exist_ok=True, parents=True)
-        text_settings = (
-            f"[settings]\n"
-            f"email={input('Enter your account email: ')}\n"
-            f"password={input('Enter your account password: ')}\n"
-        )
-        config_path.write_text(text_settings)
+    if email and password:
+        return email, password
 
-    config.read(config_path, encoding="utf-8")
+    # Priority 2: Config file
+    if config_path.exists():
+        config.read(config_path, encoding="utf-8")
+        email = config.get("settings", "email")
+        password = config.get("settings", "password")
+        if email and password:
+            return email, password
 
-    email = config.get("settings", "email")
-    password = config.get("settings", "password")
-
-    if not email or not password:
-        print("Email and password cannot be left blank...")
-        sys.exit()
+    # Priority 3: Interactive input (Fallback for local)
+    print("No credentials found in environment or config. Using interactive input...")
+    config_path.parent.mkdir(exist_ok=True, parents=True)
+    email = input('Enter your account email: ')
+    password = input('Enter your account password: ')
+    
+    text_settings = (
+        f"[settings]\n"
+        f"email={email}\n"
+        f"password={password}\n"
+    )
+    config_path.write_text(text_settings)
 
     return email, password
 

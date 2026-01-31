@@ -51,19 +51,44 @@ class Login(Browser):
         return token
 
     async def awaiting_pin(self, data, input_message):
+        from pathlib import Path
         self.headers["Content-Type"] = "application/x-www-form-urlencoded"
         self.headers["Referer"] = f"{self.full_url}/sign-in/modal"
         data["keep_code"] = 1
-        try:
-            code = input(input_message)
-            if not code.isdigit():
-                print("Please enter a valid code.")
-                await self.awaiting_pin(data, input_message)
-            data["code"] = code
-        except KeyboardInterrupt:
-            print("\nClosing program.")
-            sys.exit()
+        
+        pin_file = Path("pin.txt")
+        print(f"\n[QUOTEX] {input_message}")
+        print("Note: You can also write the code into a 'pin.txt' file in the project folder.")
+        
+        code = None
+        # Wait up to 2 minutes for pin.txt
+        for i in range(60):
+            if pin_file.exists():
+                try:
+                    content = pin_file.read_text().strip()
+                    if content and content.isdigit():
+                        code = content
+                        print(f"PIN detected in pin.txt: {code}")
+                        pin_file.unlink()
+                        break
+                except Exception:
+                    pass
+            await asyncio.sleep(2)
+            
+        if not code:
+            try:
+                print("No pin.txt found. Falling back to console input...")
+                code = input(input_message)
+            except (EOFError, Exception):
+                print("Console input failed. Please use pin.txt to provide the PIN.")
+                return
 
+        if not code or not code.isdigit():
+            print("Invalid code. Please try again.")
+            await self.awaiting_pin(data, input_message)
+            return
+
+        data["code"] = code
         await asyncio.sleep(1)
         self.send_request(
             method="POST",

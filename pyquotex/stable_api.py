@@ -119,8 +119,12 @@ class Quotex:
             pass
 
     async def get_instruments(self):
+        start_wait = time.time()
         while self.check_connect and self.api.instruments is None:
             await asyncio.sleep(0.2)
+            if time.time() - start_wait > 15: # 15s timeout
+                print("Timeout waiting for instruments/list")
+                break
         return self.api.instruments or []
 
     def get_all_asset_name(self):
@@ -159,12 +163,17 @@ class Quotex:
             end_from_time = time.time()
         index = expiration.get_timestamp()
         self.api.candles.candles_data = None
+        self.api.current_asset = asset
         self.start_candles_stream(asset, period)
         self.api.get_candles(asset, index, end_from_time, offset, period)
+        start_history_wait = time.time()
         while True:
             while self.check_connect and self.api.candles.candles_data is None:
                 await asyncio.sleep(0.1)
-            if self.api.candles.candles_data is not None:
+                if time.time() - start_history_wait > 20:
+                    print("Timeout waiting for history/load response")
+                    break
+            if self.api.candles.candles_data is not None or time.time() - start_history_wait > 20:
                 break
 
         candles = self.prepare_candles(asset, period)

@@ -12,55 +12,47 @@ class Login(Browser):
     url = ""
     cookies = None
     ssid = None
-    # Switched to qxbroker.com as it is less blocked on cloud servers
-    base_url = 'qxbroker.com'
+    # Array of domains to try if blocked
+    alternative_domains = ['qxbroker.com', 'quotex-broker.com', 'market-qx.com', 'quotex.io']
+    base_url = alternative_domains[0]
     https_base_url = f'https://{base_url}'
 
     def __init__(self, api, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.api = api
         self.html = None
-        # Modern Windows Chrome User-Agent
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
-            "Sec-Ch-Ua": '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-            "Sec-Ch-Ua-Platform": '"Windows"',
-            "Sec-Ch-Ua-Mobile": "?0"
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1"
         }
         self.full_url = f"{self.https_base_url}/{api.lang}"
 
     def get_token(self):
-        self.headers["Connection"] = "keep-alive"
-        self.headers["Accept-Encoding"] = "gzip, deflate, br"
-        self.headers["Accept-Language"] = "pt-BR,pt;q=0.8,en-US;q=0.5,en;q=0.3"
-        self.headers["Accept"] = (
-            "text/html,application/xhtml+xml,application/xml;q=0.9,"
-            "image/avif,image/webp,*/*;q=0.8"
-        )
-        self.headers["Referer"] = f"{self.full_url}/sign-in"
-        self.headers["Upgrade-Insecure-Requests"] = "1"
-        self.headers["Sec-Ch-Ua-Mobile"] = "?0"
-        self.headers["Sec-Ch-Ua-Platform"] = '"Linux"'
-        self.headers["Sec-Fetch-Site"] = "same-origin"
-        self.headers["Sec-Fetch-User"] = "?1"
-        self.headers["Sec-Fetch-Dest"] = "document"
-        self.headers["Sec-Fetch-Mode"] = "navigate"
-        self.headers["Dnt"] = "1"
-        try:
-            self.send_request(
-                "GET",
-                f"{self.full_url}/sign-in/modal/"
-            )
-            html = self.get_soup()
-            match = html.find(
-                "input", {"name": "_token"}
-            )
-            token = None if not match else match.get("value")
-            return token
-        except Exception as e:
-            print(f"Error fetching token: {e}")
-            return None
+        """Attempts to fetch the CSRF token from multiple domains if blocked."""
+        for domain in self.alternative_domains:
+            try:
+                self.base_url = domain
+                self.https_base_url = f'https://{domain}'
+                self.full_url = f"{self.https_base_url}/{self.api.lang}"
+                
+                # Direct sign-in page is often more stable than the modal
+                target_url = f"{self.full_url}/sign-in/"
+                self.send_request("GET", target_url, timeout=10)
+                
+                if self.response and self.response.status_code == 200:
+                    html = self.get_soup()
+                    match = html.find("input", {"name": "_token"})
+                    if match:
+                        token = match.get("value")
+                        print(f"Bypass Successful on: {domain}")
+                        return token
+            except Exception as e:
+                print(f"Failed bypass on {domain}: {e}")
+                continue
+        return None
 
     async def awaiting_pin(self, data, input_message):
         from pathlib import Path
